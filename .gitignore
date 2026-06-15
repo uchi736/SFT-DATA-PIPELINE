@@ -1,0 +1,17 @@
+# secrets
+.env
+
+# data artifacts
+data/output/
+data/.checkpoint/
+data/input/*.jsonl
+
+# python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+
+# HF cache (if placed locally)
+.hf_cache/

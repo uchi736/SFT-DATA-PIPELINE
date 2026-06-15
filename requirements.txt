@@ -1,0 +1,19 @@
+# LLM client / structured output
+pydantic-ai>=0.0.14
+pydantic>=2.0.0
+openai>=1.0.0
+httpx>=0.27.0
+
+# Tokenizer for training-budget length filtering (Swallow / Llama-3.1)
+transformers>=4.36.0
+datasets>=2.14.0
+
+# Optional text normalization (cpt TextCleaner互換)
+# langchain-text-splitters は RAFT では未使用（チャンク済み入力前提）
+
+# Utilities
+python-dotenv>=1.0.0
+tqdm>=4.66.0
+
+# Tests
+pytest>=7.4.0
