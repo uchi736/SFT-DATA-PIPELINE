@@ -66,6 +66,44 @@ def test_oversize_drop_policy():
     assert stats["dropped_oversize"] == 1
 
 
+def test_sft_system_prompt_resolution():
+    from prompts import get_sft_system_prompt, SFT_SYSTEM_PROMPTS
+    assert get_sft_system_prompt("raft") == SFT_SYSTEM_PROMPTS["raft"]   # 名前→プリセット
+    assert get_sft_system_prompt("自由なsystem文") == "自由なsystem文"      # 任意文字列はそのまま
+    assert get_sft_system_prompt(None) is None
+
+
+def _records_n(n):
+    recs, idx = [], {}
+    for i in range(n):
+        r, ix = _mk_record(Chunk(id=f"g{i}", text=f"本文{i}。"),
+                           [Chunk(id=f"d{i}", text=f"妨害{i}。")])
+        recs.append(r)
+        idx.update(ix)
+    return recs, idx
+
+
+def test_system_dropout_full_and_none():
+    recs, idx = _records_n(10)
+    # dropout=1.0 → どの例にも system が付かない
+    out, stats = export.run_phase4(recs, idx, COUNTER, max_len=10000, system_prompt="SYS", system_dropout=1.0)
+    assert all(r.messages[0]["role"] != "system" for r in out)
+    assert stats["no_system"] == 10
+    # dropout=0.0 → 全例に system
+    out2, _ = export.run_phase4(recs, idx, COUNTER, max_len=10000, system_prompt="SYS", system_dropout=0.0)
+    assert all(r.messages[0]["role"] == "system" for r in out2)
+
+
+def test_system_dropout_deterministic_partial():
+    recs, idx = _records_n(40)
+    a, sa = export.run_phase4(recs, idx, COUNTER, max_len=10000, system_prompt="SYS", system_dropout=0.3, seed=42)
+    b, sb = export.run_phase4(recs, idx, COUNTER, max_len=10000, system_prompt="SYS", system_dropout=0.3, seed=42)
+    assert sa["no_system"] == sb["no_system"]          # 同seedで件数一致
+    assert 0 < sa["no_system"] < 40                    # 一部だけ落ちる
+    # 同一例の system 有無も一致（決定的）
+    assert [r.messages[0]["role"] for r in a] == [r.messages[0]["role"] for r in b]
+
+
 def test_duplicate_pairs_removed():
     golden = Chunk(id="g", text="本文。")
     d = [Chunk(id="d0", text="妨害。")]

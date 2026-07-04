@@ -27,7 +27,7 @@ PROJECT_ROOT = Path(__file__).parent.parent
 load_dotenv(PROJECT_ROOT / ".env")
 sys.path.insert(0, str(Path(__file__).parent))  # scripts/
 
-from prompts import SYSTEM_PROMPTS  # noqa: E402
+from prompts import SFT_SYSTEM_PROMPTS, TASKS, get_sft_system_prompt, get_task  # noqa: E402
 from raft import checkpoint, corpus as corpus_mod  # noqa: E402
 from raft import question_gen, answer_gen, assemble, export  # noqa: E402
 from raft.schemas import QuestionRecord, AnswerRecord  # noqa: E402
@@ -46,6 +46,8 @@ def parse_args():
     )
     p.add_argument("input", help="チャンク済みコーパス JSONL ({text,id,meta} または {text,source,doc})")
     p.add_argument("-o", "--output", required=True, help="出力 SFT JSONL パス")
+    p.add_argument("--task", choices=list(TASKS.keys()), default="qa",
+                   help="qa=RAFT質問応答 / regulation=工程→該当規定の判定")
     p.add_argument("--questions-per-chunk", type=int, default=3)
     p.add_argument("--num-distractors", type=int, default=4, help="k: ディストラクタ数")
     p.add_argument("--oracle-prob", type=float, default=0.8, help="P: ゴールデン投入確率")
@@ -58,7 +60,9 @@ def parse_args():
     p.add_argument("--val-split", type=float, default=0.0)
     p.add_argument("--limit", type=int, default=None, help="読み込むチャンク数の上限")
     p.add_argument("--system-prompt", default=None,
-                   help="literal 文字列 or SYSTEM_PROMPTS のキー")
+                   help="出力に注入する system。プリセット名 {raft, rag_strict, assistant_ja} か任意の文字列")
+    p.add_argument("--system-dropout", type=float, default=0.0,
+                   help="この割合の例を system 無しで出力（推論時のsystemブレに頑健化、0〜1）")
     p.add_argument("--oversize-policy", choices=["drop", "reduce"], default="reduce")
     p.add_argument("--min-distractors", type=int, default=1)
     p.add_argument("--min-chunk-chars", type=int, default=corpus_mod.MIN_CHUNK_CHARS,
@@ -75,9 +79,8 @@ def parse_args():
 
 
 def _resolve_system_prompt(value):
-    if value is None:
-        return None
-    return SYSTEM_PROMPTS.get(value, value)
+    # 名前なら SFT_SYSTEM_PROMPTS から展開、それ以外は文字列そのまま
+    return get_sft_system_prompt(value)
 
 
 def _dedup_answers(dicts: list[dict]) -> list[dict]:
@@ -139,6 +142,7 @@ def _eyeball(records, n=3):
 
 async def run(args):
     stem = Path(args.output).stem
+    task = get_task(args.task)
     if not args.resume:
         checkpoint.reset(CHECKPOINT_DIR, stem)
 
@@ -160,11 +164,16 @@ async def run(args):
         print(f"  ゴールデンを {args.max_goldens} 件にサンプル（seed={args.seed}、ディストラクタは全{len(chunks)}件から）")
     index = corpus_mod.index_corpus(chunks)
     sampler = corpus_mod.make_distractor_sampler(chunks, args.seed)
-    print(f"コーパス: 全{len(chunks)}件 / ゴールデン候補{len(goldens)}件 / "
+    print(f"タスク: {args.task} / コーパス: 全{len(chunks)}件 / ゴールデン候補{len(goldens)}件 / "
           f"プロバイダ={'dry-run' if args.dry_run else 'llm'}")
 
-    # --- プリフライト（本番のみ）---
-    if not args.dry_run:
+    # --- プリフライト（実際に生成する場合のみ。再エクスポートだけなら vLLM 不要）---
+    needs_llm = not args.dry_run and not (
+        args.resume
+        and checkpoint.is_completed(CHECKPOINT_DIR, stem, PH_QUESTIONS)
+        and checkpoint.is_completed(CHECKPOINT_DIR, stem, PH_ANSWERS)
+    )
+    if needs_llm:
         err = _preflight()
         if err:
             print(f"エラー(preflight): {err}", file=sys.stderr)
@@ -186,6 +195,7 @@ async def run(args):
             await question_gen.run_phase1(
                 goldens, args.questions_per_chunk, args.concurrency, args.timeout,
                 dry_run=args.dry_run, done_chunk_ids=done, sink=ap.write,
+                prompt_key=task["p1"],
             )
         finally:
             ap.close()
@@ -217,6 +227,7 @@ async def run(args):
             await answer_gen.run_phase2(
                 questions, args.concurrency, args.timeout,
                 dry_run=args.dry_run, done_question_ids=done, sink=ap.write,
+                prompt_key=task["p2"],
             )
         finally:
             ap.close()
@@ -230,6 +241,7 @@ async def run(args):
     print("Phase3: RAFT合成")
     assembled = assemble.run_phase3(
         answers, sampler, args.num_distractors, args.oracle_prob, args.seed,
+        query_label=task["query_label"],
     )
     oracle_in = sum(1 for a in assembled if a.oracle_included)
     print(f"  合成例: {len(assembled)}件 (oracle投入 {oracle_in}件 "
@@ -245,6 +257,8 @@ async def run(args):
         max_len=args.max_len, oversize_policy=args.oversize_policy,
         min_distractors=args.min_distractors,
         system_prompt=_resolve_system_prompt(args.system_prompt),
+        system_dropout=args.system_dropout, seed=args.seed,
+        query_label=task["query_label"],
     )
     paths = export.write_outputs(records, args.output, val_split=args.val_split, seed=args.seed)
 

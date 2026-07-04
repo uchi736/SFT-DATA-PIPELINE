@@ -21,17 +21,18 @@ DOC_OPEN = "<DOCUMENT>"
 DOC_CLOSE = "</DOCUMENT>"
 
 
-def format_context(docs, question: str) -> str:
-    """ドキュメント列 + 質問を user メッセージ文字列へ整形。
+def format_context(docs, question: str, query_label: str = "質問") -> str:
+    """ドキュメント列 + クエリを user メッセージ文字列へ整形。
 
     Args:
         docs: Chunk のリスト（doc_order どおりの順序で渡す）
-        question: 質問文
+        question: クエリ本文（qa=質問 / regulation=工程 など）
+        query_label: 末尾クエリの見出し（既定「質問」、regulation では「工程」）
     """
     body = "\n".join(
         f"{DOC_OPEN}\n{doc.text.strip()}\n{DOC_CLOSE}" for doc in docs
     )
-    return f"{body}\n\n質問: {question.strip()}"
+    return f"{body}\n\n{query_label}: {question.strip()}"
 
 
 def render_cot(reasoning: str, final_answer: str) -> str:

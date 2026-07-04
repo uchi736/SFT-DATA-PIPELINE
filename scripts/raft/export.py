@@ -21,6 +21,7 @@ from typing import Callable, Optional
 sys.path.insert(0, str(Path(__file__).parent.parent))  # scripts/
 from raft.schemas import AssembledRecord, Chunk, SFTRecord  # noqa: E402
 from raft import formatting  # noqa: E402
+from raft.corpus import stable_seed  # noqa: E402
 
 
 def build_messages(user_content: str, assistant_content: str, system_prompt: Optional[str]) -> list[dict]:
@@ -39,6 +40,7 @@ def _reduce_to_fit(
     max_len: int,
     min_distractors: int,
     system_prompt: Optional[str],
+    query_label: str = "質問",
 ) -> tuple[list[dict], int, bool]:
     """ディストラクタを末尾から減らして収める。戻り値: (messages, token_count, reduced?)"""
     golden_in = rec.chunk_id if rec.oracle_included else None
@@ -49,7 +51,7 @@ def _reduce_to_fit(
 
     while True:
         docs = [index[i] for i in order if i in index]
-        user = formatting.format_context(docs, rec.question)
+        user = formatting.format_context(docs, rec.question, query_label=query_label)
         msgs = build_messages(user, rec.assistant_content, system_prompt)
         n = counter(msgs)
         reduced = len(order) != len(rec.doc_order)
@@ -74,8 +76,15 @@ def run_phase4(
     oversize_policy: str = "reduce",
     min_distractors: int = 1,
     system_prompt: Optional[str] = None,
+    system_dropout: float = 0.0,
+    seed: int = 42,
+    query_label: str = "質問",
 ) -> tuple[list[SFTRecord], dict]:
-    """長さゲート + 最終ペア重複排除して SFTRecord 列を返す。"""
+    """長さゲート + 最終ペア重複排除して SFTRecord 列を返す。
+
+    system_dropout>0 の場合、例ごとに決定的に一定割合を system 無しで出力する
+    （推論時の system プロンプトのブレに対する頑健化）。
+    """
     kept: list[SFTRecord] = []
     seen_pairs: set = set()
     stats = {
@@ -84,15 +93,25 @@ def run_phase4(
         "dropped_oversize": 0,
         "dropped_dup": 0,
         "reduced": 0,
+        "no_system": 0,
     }
 
     for rec in assembled:
-        msgs = build_messages(rec.user_content, rec.assistant_content, system_prompt)
+        # system ドロップアウト（例ごと決定的）
+        sys_p = system_prompt
+        if system_prompt and system_dropout > 0.0:
+            rng = random.Random(stable_seed(seed, rec.example_id, "sysdrop"))
+            if rng.random() < system_dropout:
+                sys_p = None
+        if sys_p is None and system_prompt:
+            stats["no_system"] += 1
+
+        msgs = build_messages(rec.user_content, rec.assistant_content, sys_p)
         n = counter(msgs)
 
         if n > max_len and oversize_policy == "reduce":
             msgs, n, reduced = _reduce_to_fit(
-                rec, index, counter, max_len, min_distractors, system_prompt
+                rec, index, counter, max_len, min_distractors, sys_p, query_label
             )
             if reduced:
                 stats["reduced"] += 1

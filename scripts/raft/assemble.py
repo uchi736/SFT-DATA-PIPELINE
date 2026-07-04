@@ -22,7 +22,8 @@ from raft.corpus import stable_seed  # noqa: E402
 from raft import formatting  # noqa: E402
 
 
-def assemble_one(ans: AnswerRecord, sampler, k: int, oracle_prob: float, seed: int) -> AssembledRecord:
+def assemble_one(ans: AnswerRecord, sampler, k: int, oracle_prob: float, seed: int,
+                 query_label: str = "質問") -> AssembledRecord:
     """1件の回答から RAFT 学習例を決定的に合成する。"""
     example_id = make_example_id(ans.question_id)
     rng = random.Random(stable_seed(seed, example_id))
@@ -38,7 +39,7 @@ def assemble_one(ans: AnswerRecord, sampler, k: int, oracle_prob: float, seed: i
     docs = ([golden] + distractors) if include_oracle else list(distractors)
     rng.shuffle(docs)
 
-    user_content = formatting.format_context(docs, ans.question)
+    user_content = formatting.format_context(docs, ans.question, query_label=query_label)
     assistant_content = ans.cot_text
 
     return AssembledRecord(
@@ -60,11 +61,12 @@ def run_phase3(
     k: int,
     oracle_prob: float,
     seed: int,
+    query_label: str = "質問",
 ) -> list[AssembledRecord]:
     """成功した回答 (ok=True かつ cot_text あり) を RAFT 例へ合成。"""
     out: list[AssembledRecord] = []
     for ans in answers:
         if not ans.ok or not ans.cot_text.strip():
             continue
-        out.append(assemble_one(ans, sampler, k, oracle_prob, seed))
+        out.append(assemble_one(ans, sampler, k, oracle_prob, seed, query_label=query_label))
     return out

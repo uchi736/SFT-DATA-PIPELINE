@@ -20,6 +20,25 @@ corpus.jsonl
 各フェーズ間は `data/.checkpoint/` に中間 JSONL を残し、`--resume` で再開できる。
 Phase1/2 は LLM 呼び出し、Phase3/4 は決定的・安価なので常に再実行される。
 
+## タスク（`--task`）
+
+同じ RAFT 機構（検索文脈＋ディストラクタ＋oracleドロップアウト＋引用付きCoT）を、
+Phase1/2 のプロンプトを差し替えて別タスクに特化できる。
+
+| `--task` | Phase1（クエリ生成） | Phase2（回答） | 用途 |
+|---|---|---|---|
+| `qa`（既定） | チャンクから**質問**を生成 | 質問に引用付きCoTで**回答** | RAG向けQA |
+| `regulation` | 規程条文から**その規程が適用される工程/作業**を逆生成 | 工程に規程が該当するかを引用付きCoTで**判定** | 「工程→該当規定の判定」特化 |
+
+```powershell
+# 工程→該当規定 判定モデル用データ（正解ラベル不要・規程から工程を逆生成してブートストラップ）
+python scripts/build_raft.py corpus_clean.jsonl -o data/output/sft_regulation.jsonl `
+  --task regulation --max-doc-chars 450 --num-distractors 4 --questions-per-chunk 1 `
+  --system-prompt regul --system-dropout 0.15 --val-split 0.1 --keep-intermediate
+```
+`regulation` では文脈末尾のラベルが「質問:」→「工程:」に変わり、ディストラクタ（無関係規程）の
+中から該当規程を選び根拠引用する挙動を学習する。
+
 ## 入力 / 出力
 
 - **入力**: チャンク済み JSONL（`cpt-data-pipeline` の `_preprocessed.jsonl` 互換）
@@ -63,7 +82,22 @@ python scripts/raft/estimate.py data/input/corpus.jsonl --questions-per-chunk 3 
 
 主なオプション: `--oracle-prob`(P) `--num-distractors`(k) `--questions-per-chunk` `--seed`
 `--max-len` `--oversize-policy {reduce,drop}` `--min-distractors` `--val-split` `--resume`
-`--system-prompt`（literal か `SYSTEM_PROMPTS` のキー）`--dry-run` `--keep-intermediate`。
+`--max-doc-chars`(再分割) `--max-goldens`(件数上限) `--dry-run` `--keep-intermediate`。
+
+### system プロンプト（学習データへの注入）
+
+`--system-prompt` で出力 `messages` の先頭に system を付与できる。プリセット名（`prompts.py` の
+`SFT_SYSTEM_PROMPTS`）か任意の文字列を指定:
+
+- `raft` … RAG/RAFT契約（文書を根拠に逐語引用＋CoTで回答、無ければ知識で）
+- `rag_strict` … 文書のみで回答（外部知識を使わない）
+- `assistant_ja` … Swallowテンプレ既定と同等の汎用ペルソナ
+
+`--system-dropout 0.15` で一定割合を system 無しで出力し、推論時の system ブレに頑健化（決定的）。
+
+> **重要（train/serve 一致）**: 学習データに system が無いと、Swallow の chat template が既定の
+> 「あなたは誠実で優秀な日本人のアシスタントです。」を自動注入する。推論時に独自 system を使うなら、
+> **同じ system を `--system-prompt` で学習データにも入れる**こと。
 
 ## 長さフィルタ（重要）
 

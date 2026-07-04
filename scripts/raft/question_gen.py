@@ -20,18 +20,17 @@ from raft import _genutil  # noqa: E402
 # 1チャンクに渡すテキスト上限（プロンプト肥大を防ぐ）
 _TEXT_LIMIT = 3000
 
-_agent = None
+_agents: dict = {}
 
 
-def _get_agent():
-    global _agent
-    if _agent is None:
+def _get_agent(prompt_key: str = "raft_question"):
+    if prompt_key not in _agents:
         from llm_factory import create_pydanticai_agent
-        _agent = create_pydanticai_agent(
+        _agents[prompt_key] = create_pydanticai_agent(
             output_type=QuestionList,
-            system_prompt=get_system_prompt("raft_question"),
+            system_prompt=get_system_prompt(prompt_key),
         )
-    return _agent
+    return _agents[prompt_key]
 
 
 def _split_sentences(text: str) -> list[str]:
@@ -49,15 +48,16 @@ def mock_questions(chunk: Chunk, num_questions: int) -> list[str]:
     return out
 
 
-async def _generate(text: str, num_questions: int, timeout: float) -> list[str]:
-    prompt = get_user_prompt("raft_question", text=text[:_TEXT_LIMIT], num_questions=num_questions)
+async def _generate(text: str, num_questions: int, timeout: float,
+                    prompt_key: str = "raft_question") -> list[str]:
+    prompt = get_user_prompt(prompt_key, text=text[:_TEXT_LIMIT], num_questions=num_questions)
     settings = _genutil.guided_settings(QuestionList)
 
     def _valid(out: QuestionList) -> bool:
         return bool(out.questions) and all(q.strip() for q in out.questions)
 
     out = await _genutil.run_structured(
-        _get_agent(), prompt, timeout,
+        _get_agent(prompt_key), prompt, timeout,
         model_settings=settings, validate=_valid, repair_hint=REPAIR_HINTS["json"],
     )
     if out is None:
@@ -80,11 +80,13 @@ async def run_phase1(
     dry_run: bool = False,
     done_chunk_ids: set | None = None,
     sink=None,
+    prompt_key: str = "raft_question",
 ) -> list[QuestionRecord]:
-    """ゴールデン候補チャンクごとに質問を生成し QuestionRecord 列を返す。
+    """ゴールデン候補チャンクごとにクエリ（質問/工程）を生成し QuestionRecord 列を返す。
 
     done_chunk_ids に含まれる chunk は再開時にスキップ。sink(dict) が与えられれば
     生成完了ごとに1レコードずつ追記（逐次チェックポイント, H1）。返り値は新規生成分のみ。
+    prompt_key でタスク別プロンプト（qa=raft_question / regulation=regul_process）を選ぶ。
     """
     done = done_chunk_ids or set()
     todo = [c for c in golden_chunks if c.id not in done]
@@ -108,7 +110,7 @@ async def run_phase1(
 
     await _genutil.run_incremental(
         todo,
-        lambda c: _generate(c.text, num_questions, timeout),
+        lambda c: _generate(c.text, num_questions, timeout, prompt_key),
         concurrency,
         lambda c, qs: emit(c, qs),
     )

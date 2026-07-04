@@ -21,18 +21,17 @@ from raft import _genutil, formatting  # noqa: E402
 # 回答プロンプトに渡すオラクル本文の上限
 _CONTEXT_LIMIT = 3000
 
-_agent = None
+_agents: dict = {}
 
 
-def _get_agent():
-    global _agent
-    if _agent is None:
+def _get_agent(prompt_key: str = "raft_cot_answer"):
+    if prompt_key not in _agents:
         from llm_factory import create_pydanticai_agent
-        _agent = create_pydanticai_agent(
+        _agents[prompt_key] = create_pydanticai_agent(
             output_type=CoTAnswer,
-            system_prompt=get_system_prompt("raft_cot_answer"),
+            system_prompt=get_system_prompt(prompt_key),
         )
-    return _agent
+    return _agents[prompt_key]
 
 
 def mock_cot(question: str, golden_text: str) -> CoTAnswer:
@@ -46,9 +45,10 @@ def mock_cot(question: str, golden_text: str) -> CoTAnswer:
     return CoTAnswer(reasoning=reasoning, final_answer=final)
 
 
-async def _generate(question: str, golden_text: str, timeout: float) -> CoTAnswer | None:
+async def _generate(question: str, golden_text: str, timeout: float,
+                    prompt_key: str = "raft_cot_answer") -> CoTAnswer | None:
     ctx = golden_text[:_CONTEXT_LIMIT]
-    prompt = get_user_prompt("raft_cot_answer", context=ctx, question=question)
+    prompt = get_user_prompt(prompt_key, context=ctx, question=question)
     settings = _genutil.guided_settings(CoTAnswer)
     repair_hint = REPAIR_HINTS["quote"] + "\n" + REPAIR_HINTS["json"]
 
@@ -61,7 +61,7 @@ async def _generate(question: str, golden_text: str, timeout: float) -> CoTAnswe
         )
 
     return await _genutil.run_structured(
-        _get_agent(), prompt, timeout,
+        _get_agent(prompt_key), prompt, timeout,
         model_settings=settings, validate=_valid, repair_hint=repair_hint,
         max_attempts=3,
     )
@@ -89,11 +89,13 @@ async def run_phase2(
     dry_run: bool = False,
     done_question_ids: set | None = None,
     sink=None,
+    prompt_key: str = "raft_cot_answer",
 ) -> list[AnswerRecord]:
-    """質問ごとに CoT 回答を生成し AnswerRecord 列を返す。
+    """クエリ（質問/工程）ごとに CoT 回答/判定を生成し AnswerRecord 列を返す。
 
-    done_question_ids に含まれる質問は再開時にスキップ。sink(dict) が与えられれば
+    done_question_ids に含まれるものは再開時にスキップ。sink(dict) が与えられれば
     生成完了ごとに1レコードずつ追記（逐次チェックポイント, H1）。返り値は新規生成分のみ。
+    prompt_key でタスク別プロンプト（qa=raft_cot_answer / regulation=regul_judge）を選ぶ。
     """
     done = done_question_ids or set()
     todo = [q for q in questions if q.question_id not in done]
@@ -112,7 +114,7 @@ async def run_phase2(
 
     await _genutil.run_incremental(
         todo,
-        lambda q: _generate(q.question, q.golden_text, timeout),
+        lambda q: _generate(q.question, q.golden_text, timeout, prompt_key),
         concurrency,
         lambda q, cot: emit(q, cot),
     )

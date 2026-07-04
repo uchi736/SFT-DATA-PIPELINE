@@ -66,3 +66,17 @@ def test_quotes_grounded_paraphrase_fails():
 
 def test_quotes_grounded_no_quotes_fails():
     assert not formatting.quotes_grounded("引用なしの本文。", SOURCE)
+
+
+def test_format_context_custom_query_label():
+    out = formatting.format_context(_docs(), "高圧ガス設備の点検", query_label="工程")
+    assert out.rstrip().endswith("工程: 高圧ガス設備の点検")
+
+
+def test_task_registry():
+    from prompts import get_task
+    qa = get_task("qa")
+    reg = get_task("regulation")
+    assert qa["query_label"] == "質問" and qa["p1"] == "raft_question"
+    assert reg["query_label"] == "工程" and reg["p1"] == "regul_process" and reg["p2"] == "regul_judge"
+    assert get_task("未知") == qa  # フォールバック
