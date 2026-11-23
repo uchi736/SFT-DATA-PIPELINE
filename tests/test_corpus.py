@@ -13,8 +13,8 @@ def _write(tmp_path, rows):
 def _rows_source_doc():
     # 実コーパス互換 {text, source, doc}（id/meta 無し）
     return [
-        {"text": "あ" * 300, "source": "regulation", "doc": "01_anewho"},
-        {"text": "い" * 300, "source": "regulation", "doc": "01_anewho"},
+        {"text": "あ" * 300, "source": "regulation", "doc": "01_foo"},
+        {"text": "い" * 300, "source": "regulation", "doc": "01_foo"},
         {"text": "う" * 300, "source": "manual", "doc": "02_bar"},
         {"text": "短い", "source": "misc", "doc": "note"},  # 短い→ゴールデン候補外
     ]
@@ -29,7 +29,7 @@ def test_loads_source_doc_schema(tmp_path):
     assert all(ids) and len(set(ids)) == 4
     # source/doc が meta へ畳み込まれている
     assert chunks[0].meta.get("source") == "regulation"
-    assert chunks[0].meta.get("doc") == "01_anewho"
+    assert chunks[0].meta.get("doc") == "01_foo"
 
 
 def test_ids_are_content_stable(tmp_path):

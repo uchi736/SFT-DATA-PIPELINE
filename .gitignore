@@ -15,3 +15,9 @@ venv/
 
 # HF cache (if placed locally)
 .hf_cache/
+
+# 検索用の埋め込みの置き場
+data/.cache/
+
+# エディタ・エージェントのローカル設定
+.claude/

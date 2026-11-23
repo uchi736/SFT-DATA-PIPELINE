@@ -16,7 +16,7 @@ import asyncio
 import os
 import sys
 from pathlib import Path
-from typing import Awaitable, Callable, Optional
+from typing import Callable, Optional
 
 sys.path.insert(0, str(Path(__file__).parent.parent))  # scripts/
 from llm_factory import get_provider  # noqa: E402
@@ -103,13 +103,3 @@ async def run_incremental(units, make_coro, concurrency: int, on_done) -> None:
 
     await asyncio.gather(*[_one(u) for u in units], return_exceptions=True)
 
-
-async def gather_bounded(coros: list[Awaitable], concurrency: int) -> list:
-    """セマフォで並行数を絞って gather（return_exceptions で1件の失敗が全体を止めない）。"""
-    sem = asyncio.Semaphore(max(1, concurrency))
-
-    async def _wrapped(c):
-        async with sem:
-            return await c
-
-    return await asyncio.gather(*[_wrapped(c) for c in coros], return_exceptions=True)

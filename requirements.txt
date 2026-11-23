@@ -11,6 +11,9 @@ datasets>=2.14.0
 # Optional text normalization (cpt TextCleaner互換)
 # langchain-text-splitters は RAFT では未使用（チャンク済み入力前提）
 
+# --distractor-mode retrieved の埋め込み検索
+numpy>=1.26
+
 # Utilities
 python-dotenv>=1.0.0
 tqdm>=4.66.0
